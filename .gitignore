@@ -1,0 +1,39 @@
+cat > .gitignore <<'EOF'
+# 权重文件后缀
+*.pth
+*.safetensors
+*.pt
+*.bin
+*.ckpt
+*.model
+
+# 训练输出、检查点目录
+*/model_out/
+*/checkpoints/
+*/results/
+*/pretrained_pth/
+*/archive_before_standard/
+
+# BGDiff大模型
+BGDiff/Ours/models/
+
+# 边界先验npy资源
+BGDiff/asset/maps/*.npy
+
+# 数据集文件夹
+ISIC2018/
+PH2/
+*.nii.gz
+*.h5
+*.npz
+*.npy
+
+# 环境、日志、缓存
+env_patch/
+*.log
+*.out
+__pycache__/
+*.pyc
+.vscode/
+.DS_Store
+EOF

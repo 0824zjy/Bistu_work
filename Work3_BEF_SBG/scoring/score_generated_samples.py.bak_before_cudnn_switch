@@ -1,0 +1,305 @@
+import os
+import sys
+import csv
+import json
+import math
+import argparse
+from typing import List, Optional, Dict
+
+sys.path.insert(0, "/data/zjy_work/BGDNet")
+
+import cv2
+import numpy as np
+from PIL import Image
+
+import torch
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+
+from models.BGDNet import BGDNet
+
+
+IMG_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"]
+MASK_EXTS = [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]
+
+
+def find_existing_file(dir_path: str, stem: str, exts: List[str]) -> Optional[str]:
+    for ext in exts:
+        p = os.path.join(dir_path, stem + ext)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def list_images(image_dir: str) -> List[str]:
+    files = []
+    for fn in os.listdir(image_dir):
+        ext = os.path.splitext(fn)[1].lower()
+        if ext in IMG_EXTS:
+            files.append(os.path.join(image_dir, fn))
+    return sorted(files)
+
+
+def load_state_dict_safely(model: torch.nn.Module, pth_path: str):
+    ckpt = torch.load(pth_path, map_location="cpu")
+
+    if isinstance(ckpt, dict) and "state_dict" in ckpt:
+        sd = ckpt["state_dict"]
+    else:
+        sd = ckpt
+
+    if isinstance(sd, dict) and any(k.startswith("module.") for k in sd.keys()):
+        sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
+
+    model.load_state_dict(sd, strict=True)
+
+
+def read_gray_float(path: str, resize_to=None) -> np.ndarray:
+    img = Image.open(path).convert("L")
+    arr = np.asarray(img, np.float32)
+
+    if resize_to is not None:
+        arr = cv2.resize(arr, resize_to, interpolation=cv2.INTER_LINEAR)
+
+    if arr.max() > 1.0:
+        arr = arr / 255.0
+
+    return np.clip(arr, 0.0, 1.0).astype(np.float32)
+
+
+def save_jsonl_item(f, item: Dict):
+    f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def build_hard_boundary(mask_bin: np.ndarray, kernel_size: int = 3) -> np.ndarray:
+    m = (mask_bin > 0.5).astype(np.uint8)
+    k = max(3, int(kernel_size))
+    if k % 2 == 0:
+        k += 1
+
+    kernel = np.ones((k, k), np.uint8)
+    dilation = cv2.dilate(m, kernel, iterations=1)
+    erosion = cv2.erode(m, kernel, iterations=1)
+
+    boundary = np.clip(dilation.astype(np.float32) - erosion.astype(np.float32), 0.0, 1.0)
+    return boundary.astype(np.float32)
+
+
+def build_soft_boundary_from_mask(mask_bin: np.ndarray, radius: int = 12, tau: float = 4.0) -> np.ndarray:
+    hard = build_hard_boundary(mask_bin, kernel_size=3)
+    soft = hard.copy()
+    prev = hard.copy()
+
+    for r in range(1, int(radius) + 1):
+        k = 2 * r + 1
+        kernel = np.ones((k, k), np.uint8)
+
+        dilated = cv2.dilate(hard, kernel, iterations=1)
+        shell = np.clip(dilated - prev, 0.0, 1.0)
+
+        weight = math.exp(-float(r) / max(float(tau), 1e-6))
+        soft = np.maximum(soft, shell * weight)
+        prev = dilated
+
+    return np.clip(soft, 0.0, 1.0).astype(np.float32)
+
+
+def dice_iou(pred_bin: np.ndarray, gt_bin: np.ndarray, smooth: float = 1.0):
+    pred = (pred_bin > 0.5).astype(np.float32)
+    gt = (gt_bin > 0.5).astype(np.float32)
+
+    tp = float((pred * gt).sum())
+    pred_sum = float(pred.sum())
+    gt_sum = float(gt.sum())
+    union = pred_sum + gt_sum - tp
+
+    dice = (2.0 * tp + smooth) / (pred_sum + gt_sum + smooth)
+    iou = (tp + smooth) / (union + smooth)
+
+    return float(dice), float(iou)
+
+
+def binary_entropy(p: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    p = np.clip(p.astype(np.float32), eps, 1.0 - eps)
+    h = -p * np.log(p) - (1.0 - p) * np.log(1.0 - p)
+    return h.astype(np.float32)
+
+
+def build_transform(img_size: int):
+    return transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            [0.485, 0.456, 0.406],
+            [0.229, 0.224, 0.225],
+        ),
+    ])
+
+
+@torch.no_grad()
+def predict_prob(model, image_path: str, img_size: int, device: torch.device) -> np.ndarray:
+    img = Image.open(image_path).convert("RGB")
+    original_size = img.size  # W, H
+
+    trans = build_transform(img_size)
+    x = trans(img).unsqueeze(0).to(device)
+
+    out = model(x)
+    pred_m = out[0] if isinstance(out, (tuple, list)) else out
+
+    pred_m = F.interpolate(
+        pred_m,
+        size=(original_size[1], original_size[0]),
+        mode="bilinear",
+        align_corners=False,
+    )
+
+    prob = torch.sigmoid(pred_m).squeeze().detach().cpu().numpy()
+    prob = np.clip(prob, 0.0, 1.0).astype(np.float32)
+    return prob
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--gen_image_dir", type=str, required=True)
+    parser.add_argument("--gen_mask_dir", type=str, required=True)
+    parser.add_argument("--gen_prior_dir", type=str, required=True)
+    parser.add_argument("--quality_model_pth", type=str, required=True)
+
+    parser.add_argument("--out_csv", type=str, required=True)
+    parser.add_argument("--out_jsonl", type=str, required=True)
+
+    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--img_size", type=int, default=352)
+    parser.add_argument("--cons_threshold", type=float, default=0.75)
+    parser.add_argument("--beta_hard", type=float, default=0.5)
+
+    parser.add_argument("--fallback_radius", type=int, default=12)
+    parser.add_argument("--fallback_tau", type=float, default=4.0)
+
+    args = parser.parse_args()
+
+    os.makedirs(os.path.dirname(args.out_csv), exist_ok=True)
+    os.makedirs(os.path.dirname(args.out_jsonl), exist_ok=True)
+
+    device = torch.device(args.device)
+
+    model = BGDNet(num_classes=1)
+    load_state_dict_safely(model, args.quality_model_pth)
+    model.to(device)
+    model.eval()
+
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+
+    image_paths = list_images(args.gen_image_dir)
+    if len(image_paths) == 0:
+        raise RuntimeError(f"No generated images found in {args.gen_image_dir}")
+
+    records = []
+
+    accepted_count = 0
+    missing_mask = 0
+    missing_prior = 0
+
+    with open(args.out_jsonl, "w", encoding="utf-8") as jf:
+        for idx, image_path in enumerate(image_paths):
+            name = os.path.basename(image_path)
+            stem = os.path.splitext(name)[0]
+
+            mask_path = find_existing_file(args.gen_mask_dir, stem, MASK_EXTS)
+            prior_path = find_existing_file(args.gen_prior_dir, stem, MASK_EXTS)
+
+            if mask_path is None:
+                missing_mask += 1
+                print(f"[WARN] missing generated mask for {name}, skip.")
+                continue
+
+            pred_prob = predict_prob(model, image_path, args.img_size, device)
+
+            H, W = pred_prob.shape
+            mask = read_gray_float(mask_path, resize_to=(W, H))
+            mask_bin = (mask > 0.5).astype(np.float32)
+
+            if prior_path is not None:
+                prior = read_gray_float(prior_path, resize_to=(W, H))
+            else:
+                missing_prior += 1
+                prior = build_soft_boundary_from_mask(
+                    mask_bin,
+                    radius=args.fallback_radius,
+                    tau=args.fallback_tau,
+                )
+
+            pred_bin = (pred_prob >= 0.5).astype(np.float32)
+
+            consistency_dice, consistency_iou = dice_iou(pred_bin, mask_bin)
+
+            entropy = binary_entropy(pred_prob)
+            boundary_difficulty = float((entropy * prior).mean())
+
+            if consistency_dice < float(args.cons_threshold):
+                weight = 0.0
+                accepted = 0
+            else:
+                weight = consistency_dice * (1.0 + float(args.beta_hard) * boundary_difficulty)
+                weight = float(np.clip(weight, 0.0, 1.5))
+                accepted = 1
+
+            record = {
+                "image_path": image_path,
+                "mask_path": mask_path,
+                "prior_path": prior_path if prior_path is not None else "",
+                "consistency_dice": f"{consistency_dice:.6f}",
+                "consistency_iou": f"{consistency_iou:.6f}",
+                "boundary_difficulty": f"{boundary_difficulty:.6f}",
+                "weight": f"{weight:.6f}",
+                "accepted": accepted,
+            }
+            records.append(record)
+
+            if accepted == 1:
+                accepted_count += 1
+                save_jsonl_item(jf, {
+                    "image": image_path,
+                    "mask": mask_path,
+                    "weight": weight,
+                    "source": "bef_sbg",
+                })
+
+            if (idx + 1) % 50 == 0 or (idx + 1) == len(image_paths):
+                print(
+                    f"[{idx + 1}/{len(image_paths)}] "
+                    f"accepted={accepted_count}, "
+                    f"missing_mask={missing_mask}, "
+                    f"missing_prior={missing_prior}"
+                )
+
+    with open(args.out_csv, "w", newline="", encoding="utf-8") as cf:
+        fieldnames = [
+            "image_path",
+            "mask_path",
+            "prior_path",
+            "consistency_dice",
+            "consistency_iou",
+            "boundary_difficulty",
+            "weight",
+            "accepted",
+        ]
+        writer = csv.DictWriter(cf, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+
+    print("[DONE] generated sample scoring finished.")
+    print(f"  total images   = {len(image_paths)}")
+    print(f"  records        = {len(records)}")
+    print(f"  accepted       = {accepted_count}")
+    print(f"  missing_mask   = {missing_mask}")
+    print(f"  missing_prior  = {missing_prior}")
+    print(f"  csv            = {args.out_csv}")
+    print(f"  jsonl accepted = {args.out_jsonl}")
+
+
+if __name__ == "__main__":
+    main()

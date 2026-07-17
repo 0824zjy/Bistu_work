@@ -1,0 +1,21 @@
+﻿filename,description
+01_dermoscopy_image.png,模块1：皮肤镜图像
+02_binary_lesion_mask.png,模块1：二值病灶Mask
+03_dermoscopy_with_gt_boundary.png,备用：原图叠加真实边界
+04_initial_pred_mask_prob.png,模块2：初始预测Mask概率图
+05_initial_pred_mask_binary.png,备用：初始预测二值Mask
+06_boundary_probability_map.png,模块2：边界概率图
+07_boundary_error_overlay.png,模块3：边界误差图，绿色GT，红色预测，黄色重叠
+08_uncertainty_map.png,模块3：预测不确定性图
+09_soft_boundary_prior_gray.png,模块4：软边界先验灰度图
+10_soft_boundary_prior_heat.png,备用：软边界先验热力图
+11_boundary_difficulty_map.png,模块3：Boundary Difficulty Map边界困难热力图
+12_difficulty_aware_boundary.png,模块4：困难感知软边界条件
+13_diffusion_model_icon.png,模块4：扩散模型图标
+14_synthetic_dermoscopy_demo.png,模块4：合成皮肤镜图像示意；真实论文图建议替换为SBG-Diff输出
+15_region_consistency_icon.png,模块5：区域一致性图标
+16_boundary_consistency_icon.png,模块5：边界一致性图标
+17_quality_weight_icon.png,模块5：样本质量权重图标
+18_test_image.png,模块5：测试图像
+19_final_segmentation_mask.png,模块5：最终分割Mask示意；真实论文图建议替换为最终模型输出
+20_test_to_final_mask_pair.png,模块5：测试图像到最终分割Mask组合图

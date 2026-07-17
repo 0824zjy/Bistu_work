@@ -1,0 +1,367 @@
+import os
+import csv
+import math
+import argparse
+from typing import List, Optional, Tuple
+
+import cv2
+import numpy as np
+from PIL import Image
+
+
+IMG_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"]
+MASK_EXTS = [".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"]
+
+
+def read_id_list(list_txt: str) -> List[str]:
+    ids = []
+    with open(list_txt, "r", encoding="utf-8") as f:
+        for line in f:
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            ids.append(s)
+    return ids
+
+
+def find_existing_file(dir_path: str, stem: str, exts: List[str]) -> Optional[str]:
+    for ext in exts:
+        p = os.path.join(dir_path, stem + ext)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def find_image(image_dir: str, stem: str) -> Optional[str]:
+    return find_existing_file(image_dir, stem, IMG_EXTS)
+
+
+def find_mask(mask_dir: str, stem: str) -> Optional[str]:
+    """
+    兼容：
+      - stem_segmentation.png
+      - stem.png
+    """
+    p = find_existing_file(mask_dir, stem + "_segmentation", MASK_EXTS)
+    if p is not None:
+        return p
+
+    p = find_existing_file(mask_dir, stem, MASK_EXTS)
+    if p is not None:
+        return p
+
+    return None
+
+
+def read_gray_float(path: str, resize_to: Optional[Tuple[int, int]] = None) -> np.ndarray:
+    """
+    返回 H x W, float32, [0,1]
+    resize_to: (W,H)
+    """
+    img = Image.open(path).convert("L")
+    arr = np.asarray(img, np.float32)
+
+    if resize_to is not None:
+        arr = cv2.resize(arr, resize_to, interpolation=cv2.INTER_LINEAR)
+
+    if arr.max() > 1.0:
+        arr = arr / 255.0
+
+    arr = np.clip(arr, 0.0, 1.0)
+    return arr.astype(np.float32)
+
+
+def save_gray_png(arr: np.ndarray, path: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    arr = np.clip(arr, 0.0, 1.0)
+    img = (arr * 255.0).round().astype(np.uint8)
+    cv2.imwrite(path, img)
+
+
+def normalize_01(x: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    x = x.astype(np.float32)
+    xmin = float(x.min())
+    xmax = float(x.max())
+    if xmax - xmin < eps:
+        return np.zeros_like(x, dtype=np.float32)
+    return ((x - xmin) / (xmax - xmin + eps)).astype(np.float32)
+
+
+def build_hard_boundary(mask_bin: np.ndarray, kernel_size: int = 3) -> np.ndarray:
+    """
+    hard_boundary = dilation(M_gt) - erosion(M_gt)
+
+    mask_bin: H x W, {0,1}
+    return: H x W, {0,1}
+    """
+    k = max(3, int(kernel_size))
+    if k % 2 == 0:
+        k += 1
+
+    kernel = np.ones((k, k), np.uint8)
+
+    m = (mask_bin > 0.5).astype(np.uint8)
+    dilation = cv2.dilate(m, kernel, iterations=1)
+    erosion = cv2.erode(m, kernel, iterations=1)
+
+    boundary = np.clip(dilation.astype(np.float32) - erosion.astype(np.float32), 0.0, 1.0)
+    return boundary.astype(np.float32)
+
+
+def build_soft_boundary_from_hard(
+    hard_boundary: np.ndarray,
+    radius: int = 12,
+    tau: float = 4.0,
+) -> np.ndarray:
+    """
+    基础 soft boundary prior:
+      shell r 权重 exp(-r / tau)
+    """
+    hard = (hard_boundary > 0.5).astype(np.float32)
+
+    soft = hard.copy()
+    prev = hard.copy()
+
+    for r in range(1, int(radius) + 1):
+        k = 2 * r + 1
+        kernel = np.ones((k, k), np.uint8)
+
+        dilated = cv2.dilate(hard, kernel, iterations=1)
+        shell = np.clip(dilated - prev, 0.0, 1.0)
+
+        weight = math.exp(-float(r) / max(float(tau), 1e-6))
+        soft = np.maximum(soft, shell * weight)
+
+        prev = dilated
+
+    soft = np.clip(soft, 0.0, 1.0)
+    return soft.astype(np.float32)
+
+
+def build_adaptive_boundary_prior(
+    hard_boundary: np.ndarray,
+    difficulty: np.ndarray,
+    radius: int = 12,
+    tau0: float = 4.0,
+    gamma: float = 2.0,
+) -> np.ndarray:
+    """
+    误差感知自适应软边界先验。
+
+    思路：
+      1. 从 hard boundary 向外按 shell 扩展；
+      2. 对每个 shell r，将边界困难度 D 扩展到当前 shell；
+      3. tau_map = tau0 * (1 + gamma * D_shell)
+      4. shell 权重 = exp(-r / tau_map)
+
+    这样 teacher 容易出错的边界区域会得到更宽、更强的 soft prior。
+    """
+    hard = (hard_boundary > 0.5).astype(np.float32)
+    D = np.clip(difficulty.astype(np.float32), 0.0, 1.0)
+
+    adaptive = hard.copy()
+    prev = hard.copy()
+
+    for r in range(1, int(radius) + 1):
+        k = 2 * r + 1
+        kernel = np.ones((k, k), np.uint8)
+
+        dilated_hard = cv2.dilate(hard, kernel, iterations=1)
+        shell = np.clip(dilated_hard - prev, 0.0, 1.0)
+
+        # 将边界困难度传播到当前 shell，保证自适应 tau 能影响边界邻域。
+        D_shell = cv2.dilate(D, kernel, iterations=1)
+        D_shell = np.clip(D_shell, 0.0, 1.0)
+
+        tau_map = float(tau0) * (1.0 + float(gamma) * D_shell)
+        tau_map = np.maximum(tau_map, 1e-6)
+
+        weight_map = np.exp(-float(r) / tau_map).astype(np.float32)
+
+        adaptive = np.maximum(adaptive, shell * weight_map)
+        prev = dilated_hard
+
+    adaptive = np.clip(adaptive, 0.0, 1.0)
+    return adaptive.astype(np.float32)
+
+
+def entropy_binary_prob(p: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    p = np.clip(p.astype(np.float32), eps, 1.0 - eps)
+    h = -p * np.log(p) - (1.0 - p) * np.log(1.0 - p)
+    # 归一化到 [0,1]，最大熵为 log(2)
+    h = h / math.log(2.0)
+    return np.clip(h, 0.0, 1.0).astype(np.float32)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--image_dir",
+        type=str,
+        default="/data/zjy_work/ISIC2018/train/Images",
+    )
+    parser.add_argument(
+        "--mask_dir",
+        type=str,
+        default="/data/zjy_work/ISIC2018/train/Masks",
+    )
+    parser.add_argument(
+        "--pred_mask_dir",
+        type=str,
+        required=True,
+        help="OOF teacher predicted mask probability PNG directory",
+    )
+    parser.add_argument(
+        "--pred_boundary_dir",
+        type=str,
+        default=None,
+        help="OOF teacher predicted boundary probability PNG directory, optional",
+    )
+    parser.add_argument(
+        "--list_txt",
+        type=str,
+        required=True,
+        help="Sample stem list, e.g. low_5p_all.txt",
+    )
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        required=True,
+    )
+
+    parser.add_argument("--radius", type=int, default=12)
+    parser.add_argument("--tau0", type=float, default=4.0)
+    parser.add_argument("--kernel", type=int, default=3)
+    parser.add_argument("--gamma", type=float, default=2.0)
+    parser.add_argument("--lambda_u", type=float, default=0.5)
+
+    args = parser.parse_args()
+
+    subdirs = [
+        "hard_boundary",
+        "soft_boundary_gt",
+        "error_abs",
+        "error_fn",
+        "error_fp",
+        "entropy",
+        "difficulty",
+        "adaptive_boundary_prior",
+    ]
+
+    for d in subdirs:
+        os.makedirs(os.path.join(args.out_dir, d), exist_ok=True)
+
+    ids = read_id_list(args.list_txt)
+    if len(ids) == 0:
+        raise RuntimeError(f"Empty list_txt: {args.list_txt}")
+
+    records = []
+
+    for idx, stem in enumerate(ids):
+        img_path = find_image(args.image_dir, stem)
+        mask_path = find_mask(args.mask_dir, stem)
+        pred_mask_path = find_existing_file(args.pred_mask_dir, stem, MASK_EXTS)
+
+        if img_path is None:
+            print(f"[WARN] missing image for stem={stem}, skip.")
+            continue
+
+        if mask_path is None:
+            print(f"[WARN] missing GT mask for stem={stem}, skip.")
+            continue
+
+        if pred_mask_path is None:
+            print(f"[WARN] missing teacher pred mask for stem={stem}, skip.")
+            continue
+
+        # 读取 GT mask
+        M_gt = read_gray_float(mask_path)
+        H, W = M_gt.shape
+        M_gt = (M_gt > 0.5).astype(np.float32)
+
+        # 读取 teacher mask probability，resize 到 GT 尺寸
+        P_T = read_gray_float(pred_mask_path, resize_to=(W, H))
+        P_T = np.clip(P_T, 0.0, 1.0).astype(np.float32)
+
+        # 教师边界 E_T 可选读取；第一阶段反馈主要由 P_T 与 GT 构建。
+        if args.pred_boundary_dir is not None:
+            pred_bnd_path = find_existing_file(args.pred_boundary_dir, stem, MASK_EXTS)
+            if pred_bnd_path is not None:
+                _ = read_gray_float(pred_bnd_path, resize_to=(W, H))
+
+        # 1. 真实 hard boundary
+        B_gt = build_hard_boundary(M_gt, kernel_size=args.kernel)
+
+        # 2. 基础 soft boundary prior
+        B_soft_gt = build_soft_boundary_from_hard(
+            B_gt,
+            radius=args.radius,
+            tau=args.tau0,
+        )
+
+        # 3. 边界误差图
+        E_abs = np.abs(P_T - M_gt) * B_gt
+        E_fn = M_gt * (1.0 - P_T) * B_gt
+        E_fp = (1.0 - M_gt) * P_T * B_gt
+
+        # 4. 教师预测熵
+        H_pt = entropy_binary_prob(P_T)
+
+        # 5. 边界困难图
+        raw_D = E_fn + E_fp + float(args.lambda_u) * H_pt * B_gt
+        D = normalize_01(raw_D)
+
+        # 6. 误差感知自适应软边界先验
+        B_adapt = build_adaptive_boundary_prior(
+            hard_boundary=B_gt,
+            difficulty=D,
+            radius=args.radius,
+            tau0=args.tau0,
+            gamma=args.gamma,
+        )
+
+        out_name = stem + ".png"
+
+        save_gray_png(B_gt, os.path.join(args.out_dir, "hard_boundary", out_name))
+        save_gray_png(B_soft_gt, os.path.join(args.out_dir, "soft_boundary_gt", out_name))
+        save_gray_png(E_abs, os.path.join(args.out_dir, "error_abs", out_name))
+        save_gray_png(E_fn, os.path.join(args.out_dir, "error_fn", out_name))
+        save_gray_png(E_fp, os.path.join(args.out_dir, "error_fp", out_name))
+        save_gray_png(H_pt, os.path.join(args.out_dir, "entropy", out_name))
+        save_gray_png(D, os.path.join(args.out_dir, "difficulty", out_name))
+        save_gray_png(B_adapt, os.path.join(args.out_dir, "adaptive_boundary_prior", out_name))
+
+        boundary_area = float(B_gt.sum())
+        denom = boundary_area + 1e-8
+
+        records.append({
+            "image_name": stem,
+            "mean_error": f"{float(E_abs.sum() / denom):.6f}",
+            "mean_entropy": f"{float((H_pt * B_gt).sum() / denom):.6f}",
+            "mean_difficulty": f"{float((D * B_gt).sum() / denom):.6f}",
+            "boundary_area": f"{boundary_area:.1f}",
+        })
+
+        if (idx + 1) % 50 == 0 or (idx + 1) == len(ids):
+            print(f"[{idx + 1}/{len(ids)}] processed")
+
+    csv_path = os.path.join(args.out_dir, "feedback_summary.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        fieldnames = [
+            "image_name",
+            "mean_error",
+            "mean_entropy",
+            "mean_difficulty",
+            "boundary_area",
+        ]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+
+    print(f"[DONE] feedback maps saved to: {args.out_dir}")
+    print(f"[DONE] summary csv saved to: {csv_path}")
+
+
+if __name__ == "__main__":
+    main()

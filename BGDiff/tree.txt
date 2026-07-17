@@ -1,0 +1,144 @@
+┌── BGDiff
+│  ├── config.py
+│  ├── make_prompt_json.py
+│  ├── readme.md
+│  ├── share.py
+│  ├── tool_add_control.py
+│  ├── tool_merge_control.py
+│  ├── tutorial_dataset_sample.py
+│  ├── tutorial_dataset.py
+│  ├── tutorial_inference.py
+│  ├── tutorial_train.py
+│  ├── tree.txt
+│  ├── cldm
+│  │  ├── ddim_hacked.py
+│  │  ├── dhi.py
+│  │  ├── hack.py
+│  │  ├── logger.py
+│  │  ├── model.py
+│  │  ├── cldm_or.py
+│  │  ├── cldm.py
+│  │  ├── __pycache__
+│  │  │  ├── hack.cpython-310.pyc
+│  │  │  ├── model.cpython-310.pyc
+│  │  │  ├── cldm.cpython-310.pyc
+│  │  │  ├── dhi.cpython-310.pyc
+│  │  │  └── logger.cpython-310.pyc
+│  ├── ldm
+│  │  ├── util.py
+│  │  ├── data
+│  │  │  ├── util.py
+│  │  │  └── __init__.py
+│  │  ├── models
+│  │  │  ├── autoencoder.py
+│  │  │  ├── diffusion
+│  │  │  │  ├── ddim.py
+│  │  │  │  ├── ddpm.py
+│  │  │  │  ├── plms.py
+│  │  │  │  ├── sampling_util.py
+│  │  │  │  ├── __init__.py
+│  │  │  │  ├── dpm_solver
+│  │  │  │  │  ├── dpm_solver.py
+│  │  │  │  │  ├── sampler.py
+│  │  │  │  │  ├── __init__.py
+│  │  │  │  │  ├── __pycache__
+│  │  │  │  │  │  ├── __init__.cpython-310.pyc
+│  │  │  │  │  │  ├── sampler.cpython-310.pyc
+│  │  │  │  │  │  └── dpm_solver.cpython-310.pyc
+│  │  │  │  ├── __pycache__
+│  │  │  │  │  ├── __init__.cpython-310.pyc
+│  │  │  │  │  ├── ddpm.cpython-310.pyc
+│  │  │  │  │  └── ddim.cpython-310.pyc
+│  │  │  ├── __pycache__
+│  │  │  │  └── autoencoder.cpython-310.pyc
+│  │  ├── modules
+│  │  │  ├── attention.py
+│  │  │  ├── ema.py
+│  │  │  ├── diffusionmodules
+│  │  │  │  ├── model.py
+│  │  │  │  ├── openaimodel.py
+│  │  │  │  ├── upscaling.py
+│  │  │  │  ├── util.py
+│  │  │  │  ├── __init__.py
+│  │  │  │  ├── __pycache__
+│  │  │  │  │  ├── __init__.cpython-310.pyc
+│  │  │  │  │  ├── util.cpython-310.pyc
+│  │  │  │  │  ├── openaimodel.cpython-310.pyc
+│  │  │  │  │  └── model.cpython-310.pyc
+│  │  │  ├── distributions
+│  │  │  │  ├── distributions.py
+│  │  │  │  ├── __init__.py
+│  │  │  │  ├── __pycache__
+│  │  │  │  │  ├── __init__.cpython-310.pyc
+│  │  │  │  │  └── distributions.cpython-310.pyc
+│  │  │  ├── encoders
+│  │  │  │  ├── modules.py
+│  │  │  │  ├── __init__.py
+│  │  │  │  ├── __pycache__
+│  │  │  │  │  ├── __init__.cpython-310.pyc
+│  │  │  │  │  └── modules.cpython-310.pyc
+│  │  │  ├── image_degradation
+│  │  │  │  ├── bsrgan.py
+│  │  │  │  ├── bsrgan_light.py
+│  │  │  │  ├── utils_image.py
+│  │  │  │  ├── __init__.py
+│  │  │  │  ├── utils
+│  │  │  │  │  └── test.png
+│  │  │  ├── midas
+│  │  │  │  ├── api.py
+│  │  │  │  ├── utils.py
+│  │  │  │  ├── __init__.py
+│  │  │  │  ├── midas
+│  │  │  │  │  ├── base_model.py
+│  │  │  │  │  ├── blocks.py
+│  │  │  │  │  ├── dpt_depth.py
+│  │  │  │  │  ├── midas_net.py
+│  │  │  │  │  ├── midas_net_custom.py
+│  │  │  │  │  ├── transforms.py
+│  │  │  │  │  ├── vit.py
+│  │  │  │  │  └── __init__.py
+│  │  │  ├── __pycache__
+│  │  │  │  ├── attention.cpython-310.pyc
+│  │  │  │  └── ema.cpython-310.pyc
+│  │  ├── __pycache__
+│  │  │  └── util.cpython-310.pyc
+│  ├── models
+│  │  ├── cldm_v15.yaml
+│  │  └── cldm_v21.yaml
+│  ├── Ours
+│  │  ├── scripts
+│  │  │  ├── train_1gpu.sh
+│  │  │  ├── train_2gpu.sh
+│  │  │  ├── merge.sh
+│  │  │  └── infer.sh
+│  │  ├── logs
+│  │  │  ├── exp_mask2img
+│  │  │  │  ├── train_1gpu_20260131_182321.log
+│  │  │  │  ├── version_0
+│  │  │  │  │  ├── events.out.tfevents.1769851482.de5b9aa5f049.77094.0
+│  │  │  │  │  └── hparams.yaml
+│  │  ├── results
+│  │  ├── models
+│  │  │  ├── v1-5-pruned-emaonly.safetensors
+│  │  │  └── control_sd15_init.pth
+│  │  ├── __pycache__
+│  │  │  ├── share.cpython-310.pyc
+│  │  │  └── config.cpython-310.pyc
+│  ├── data
+│  │  ├── prompt_train.json
+│  │  └── prompt_test.json
+│  ├── or
+│  │  ├── tool_add_control.py
+│  │  ├── tool_transfer_control.py
+│  │  ├── tool_merge_control.py
+│  │  ├── tutorial_dataset_sample.py
+│  │  ├── tutorial_dataset_test.py
+│  │  ├── tutorial_dataset.py
+│  │  ├── tutorial_inference.py
+│  │  ├── tutorial_train.py
+│  │  ├── environment.yaml
+│  │  └── README.md
+│  ├── __pycache__
+│  │  ├── share.cpython-310.pyc
+│  │  ├── config.cpython-310.pyc
+│  │  └── tutorial_dataset.cpython-310.pyc

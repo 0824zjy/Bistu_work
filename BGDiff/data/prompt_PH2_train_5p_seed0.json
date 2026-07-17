@@ -1,0 +1,8 @@
+{"source": "/data/zjy_work/PH2/train/Masks/IMD254_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD254.bmp", "prompt": "dermoscopy image"}
+{"source": "/data/zjy_work/PH2/train/Masks/IMD022_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD022.bmp", "prompt": "dermoscopy image"}
+{"source": "/data/zjy_work/PH2/train/Masks/IMD171_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD171.bmp", "prompt": "dermoscopy image"}
+{"source": "/data/zjy_work/PH2/train/Masks/IMD049_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD049.bmp", "prompt": "dermoscopy image"}
+{"source": "/data/zjy_work/PH2/train/Masks/IMD035_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD035.bmp", "prompt": "dermoscopy image"}
+{"source": "/data/zjy_work/PH2/train/Masks/IMD432_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD432.bmp", "prompt": "dermoscopy image"}
+{"source": "/data/zjy_work/PH2/train/Masks/IMD306_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD306.bmp", "prompt": "dermoscopy image"}
+{"source": "/data/zjy_work/PH2/train/Masks/IMD024_lesion.bmp", "target": "/data/zjy_work/PH2/train/Images/IMD024.bmp", "prompt": "dermoscopy image"}
