@@ -33,6 +33,17 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 export TEACHER_CKPT_ROOT="${TEACHER_CKPT_ROOT:-${WORK_ROOT}/teacher/checkpoints/ISIC2018_${RATIO_TAG}}"
 export OOF_OUT_DIR="${OOF_OUT_DIR:-${WORK_ROOT}/results/oof_teacher/ISIC2018_${RATIO_TAG}}"
 
+
+# Heterogeneous teacher checkpoints and OOF predictions.
+export CNN_TEACHER_CKPT_ROOT="${CNN_TEACHER_CKPT_ROOT:-${WORK_ROOT}/teacher/checkpoints/CNN_ISIC2018_${RATIO_TAG}_seed${SEED}}"
+export SAM_TEACHER_CKPT_ROOT="${SAM_TEACHER_CKPT_ROOT:-${WORK_ROOT}/teacher/checkpoints/SAM_ISIC2018_${RATIO_TAG}_seed${SEED}}"
+export OOF_CNN_OUT_DIR="${OOF_CNN_OUT_DIR:-${WORK_ROOT}/results/oof_teacher_cnn/ISIC2018_${RATIO_TAG}_seed${SEED}}"
+export OOF_SAM_OUT_DIR="${OOF_SAM_OUT_DIR:-${WORK_ROOT}/results/oof_teacher_sam/ISIC2018_${RATIO_TAG}_seed${SEED}}"
+export OOF_HETERO_OUT_DIR="${OOF_HETERO_OUT_DIR:-${WORK_ROOT}/results/oof_teacher_hetero/ISIC2018_${RATIO_TAG}_seed${SEED}}"
+export GEN_HETERO_PRED_ROOT="${GEN_HETERO_PRED_ROOT:-${WORK_ROOT}/results/generated_teacher_predictions/${RATIO_TAG}_seed${SEED}}"
+export UNLABELED_HETERO_PRED_ROOT="${UNLABELED_HETERO_PRED_ROOT:-${WORK_ROOT}/results/unlabeled_teacher_predictions/${RATIO_TAG}_seed${SEED}}"
+export SAM_BASE_CHECKPOINT="${SAM_BASE_CHECKPOINT:-/data/zjy_work/pretrained/sam_vit_b_01ec64.pth}"
+
 # Boundary feedback outputs.
 export FEEDBACK_OUT_DIR="${FEEDBACK_OUT_DIR:-${WORK_ROOT}/results/boundary_feedback/ISIC2018_${RATIO_TAG}}"
 
@@ -64,4 +75,5 @@ mkdir -p "${PID_DIR}"
 mkdir -p "${LOG_ROOT}"/{splits,teacher,infer,feedback,visual,diffusion,scoring,segmentation}
 mkdir -p "${WORK_ROOT}"/{splits,feedback,results,teacher}
 mkdir -p "${WORK_ROOT}/teacher/checkpoints"
+mkdir -p "${CNN_TEACHER_CKPT_ROOT}" "${SAM_TEACHER_CKPT_ROOT}"
 mkdir -p "${WORK_ROOT}/results"

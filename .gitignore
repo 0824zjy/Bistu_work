@@ -37,3 +37,20 @@ __pycache__/
 .vscode/
 .DS_Store
 EOF
+
+
+# # 查看改动
+# git status
+# # 把所有修改加入暂存
+# git add .
+# # 填写更新说明
+# git commit -m "此处写更新内容，例如：修复分割指标计算bug"
+# # 推送到github
+# git push# 备份文件
+*.bak_*
+# 日志图片、pid运行日志（可选，不想上传可视化图就开启）
+# Work3_BEF_SBG/logs/diffusion/image_log_Stage1-2/
+# Work3_BEF_SBG/logs/pids/
+# 新日志实验文件夹
+Work3_BEF_SBG/logs/5p_seed0_EHswap_E15_M35_H50/
+Work3_BEF_SBG/logs/diffusion/stage1_bef_sbg_chfs_v2_5p_seed0/

@@ -831,6 +831,70 @@ class BGDNet(nn.Module):
             bias=False,
         )
 
+        # ====================================================
+        # 9. Optional signed-distance task head
+        #
+        # Keep this disabled by default so the old two-head teacher
+        # checkpoints remain strictly loadable in Steps 02/03/10.
+        # Enable only for the final CHFS model with:
+        #     BGDNET_ENABLE_DISTANCE_HEAD=1
+        # ====================================================
+        self.enable_distance_head = _env_flag(
+            "BGDNET_ENABLE_DISTANCE_HEAD",
+            "0",
+        )
+        self.distance_refine_scale = float(
+            os.environ.get("BGDNET_DISTANCE_REFINE_SCALE", "0.10")
+        )
+
+        if self.enable_distance_head:
+            distance_hidden = dec_dims[0]
+            self.distance_feature = nn.Sequential(
+                nn.Conv2d(
+                    dec_dims[0],
+                    distance_hidden,
+                    kernel_size=3,
+                    padding=1,
+                    bias=False,
+                ),
+                nn.GroupNorm(8, distance_hidden),
+                nn.SiLU(inplace=True),
+                nn.Conv2d(
+                    distance_hidden,
+                    distance_hidden,
+                    kernel_size=3,
+                    padding=1,
+                    bias=False,
+                ),
+                nn.GroupNorm(8, distance_hidden),
+                nn.SiLU(inplace=True),
+            )
+
+            self.distance_head = nn.Conv2d(
+                distance_hidden,
+                1,
+                kernel_size=1,
+                bias=True,
+            )
+
+            # Zero-initialized cross-task refiners keep the initial behavior
+            # identical to the original mask/boundary heads and are learned
+            # only when useful.
+            self.distance_to_mask = nn.Conv2d(
+                distance_hidden,
+                num_classes,
+                kernel_size=1,
+                bias=False,
+            )
+            self.distance_to_boundary = nn.Conv2d(
+                distance_hidden,
+                1,
+                kernel_size=1,
+                bias=False,
+            )
+            nn.init.zeros_(self.distance_to_mask.weight)
+            nn.init.zeros_(self.distance_to_boundary.weight)
+
     @staticmethod
     def _validate_feature_list(
         features,
@@ -1118,4 +1182,20 @@ class BGDNet(nn.Module):
         mask_logits = self.mask_head(d0)
         boundary_logits = self.bound_head(d0)
 
+        if self.enable_distance_head:
+            distance_feature = self.distance_feature(d0)
+            distance_logits = self.distance_head(distance_feature)
+
+            refine_scale = float(self.distance_refine_scale)
+            if refine_scale > 0.0:
+                mask_logits = mask_logits + refine_scale * self.distance_to_mask(
+                    distance_feature
+                )
+                boundary_logits = boundary_logits + refine_scale * self.distance_to_boundary(
+                    distance_feature
+                )
+
+            return mask_logits, boundary_logits, distance_logits
+
         return mask_logits, boundary_logits
+

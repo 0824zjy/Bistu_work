@@ -17,7 +17,7 @@ export PL_GLOBAL_SEED="${PL_GLOBAL_SEED:-${SEED:-0}}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-${SEED:-0}}"
 
 export RESUME_PATH="${RESUME_PATH:-${BGDIFF_ROOT}/Ours/models/control_sd15_region_boundary_init.pth}"
-export PROMPT_JSON="${PROMPT_JSON:-${BEF_PROMPT_JSON}}"
+export PROMPT_JSON="${PROMPT_JSON:-${BEF_TRAIN_PROMPT_JSON}}"
 
 export LOG_ROOT="${DIFF_LOG_ROOT}"
 export EXP_NAME="${DIFF_STAGE1_EXP}"

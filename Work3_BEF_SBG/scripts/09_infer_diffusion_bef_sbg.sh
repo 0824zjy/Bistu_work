@@ -22,7 +22,7 @@ export DIFF_SEED="${DIFF_SEED:-${SEED:-0}}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-${SEED:-0}}"
 
 export CKPT_PATH="${CKPT_PATH:-${DIFF_STAGE2_LOG_DIR}/checkpoints/last.ckpt}"
-export PROMPT_JSON="${PROMPT_JSON:-${BEF_PROMPT_JSON}}"
+export PROMPT_JSON="${PROMPT_JSON:-${BEF_SAMPLE_PROMPT_JSON}}"
 export OUT_DIR="${OUT_DIR:-${GEN_OUT_DIR}}"
 
 export DEVICE="${DEVICE:-cuda:0}"

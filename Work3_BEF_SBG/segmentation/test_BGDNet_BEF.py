@@ -114,45 +114,65 @@ def binarize_prob(prob: np.ndarray, threshold: float):
 
 @torch.no_grad()
 def predict_with_tta(model, image: torch.Tensor):
-    """
-    Test-time augmentation:
-      original
-      horizontal flip
-      vertical flip
-      horizontal + vertical flip
-
-    Returns logits before sigmoid.
-    """
+    """Four-way flip TTA for mask, boundary and signed-distance heads."""
     logits_m = []
     logits_b = []
+    logits_d = []
 
-    # original
-    pm, pb = model(image)
-    logits_m.append(pm)
-    logits_b.append(pb)
+    variants = [
+        (image, ()),
+        (torch.flip(image, dims=[3]), (3,)),
+        (torch.flip(image, dims=[2]), (2,)),
+        (torch.flip(image, dims=[2, 3]), (2, 3)),
+    ]
 
-    # horizontal flip
-    img_h = torch.flip(image, dims=[3])
-    pm_h, pb_h = model(img_h)
-    logits_m.append(torch.flip(pm_h, dims=[3]))
-    logits_b.append(torch.flip(pb_h, dims=[3]))
+    for aug_image, flip_dims in variants:
+        output = model(aug_image)
+        if not isinstance(output, (tuple, list)) or len(output) < 2:
+            raise RuntimeError("BGDNet must return at least mask and boundary logits.")
+        pm, pb = output[0], output[1]
+        pd = output[2] if len(output) >= 3 else None
 
-    # vertical flip
-    img_v = torch.flip(image, dims=[2])
-    pm_v, pb_v = model(img_v)
-    logits_m.append(torch.flip(pm_v, dims=[2]))
-    logits_b.append(torch.flip(pb_v, dims=[2]))
+        if flip_dims:
+            pm = torch.flip(pm, dims=list(flip_dims))
+            pb = torch.flip(pb, dims=list(flip_dims))
+            if pd is not None:
+                pd = torch.flip(pd, dims=list(flip_dims))
 
-    # horizontal + vertical flip
-    img_hv = torch.flip(image, dims=[2, 3])
-    pm_hv, pb_hv = model(img_hv)
-    logits_m.append(torch.flip(pm_hv, dims=[2, 3]))
-    logits_b.append(torch.flip(pb_hv, dims=[2, 3]))
+        logits_m.append(pm)
+        logits_b.append(pb)
+        if pd is not None:
+            logits_d.append(pd)
 
     pred_m = torch.stack(logits_m, dim=0).mean(dim=0)
     pred_b = torch.stack(logits_b, dim=0).mean(dim=0)
+    pred_d = torch.stack(logits_d, dim=0).mean(dim=0) if logits_d else None
+    return pred_m, pred_b, pred_d
 
-    return pred_m, pred_b
+
+def unpack_model_outputs(output):
+    if not isinstance(output, (tuple, list)):
+        return output, None, None
+    pred_m = output[0]
+    pred_b = output[1] if len(output) >= 2 else None
+    pred_d = output[2] if len(output) >= 3 else None
+    return pred_m, pred_b, pred_d
+
+
+def fuse_mask_and_distance(
+    mask_logits: torch.Tensor,
+    distance_logits: torch.Tensor,
+    fusion_weight: float,
+    distance_temperature: float,
+):
+    mask_prob = torch.sigmoid(mask_logits)
+    if distance_logits is None or float(fusion_weight) <= 0.0:
+        return mask_prob
+    distance_prob = torch.sigmoid(
+        distance_logits * float(distance_temperature)
+    )
+    w = float(max(0.0, min(float(fusion_weight), 1.0)))
+    return (1.0 - w) * mask_prob + w * distance_prob
 
 
 def keep_largest_component(mask: np.ndarray):
@@ -288,6 +308,8 @@ def main():
     parser.add_argument("--boundary_tolerance", type=int, default=2)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--boundary_threshold", type=float, default=0.5)
+    parser.add_argument("--distance_fusion_weight", type=float, default=0.20)
+    parser.add_argument("--distance_temperature", type=float, default=4.0)
 
     parser.add_argument("--tta", action="store_true", help="Enable flip TTA during testing.")
     parser.add_argument("--postprocess_lcc", action="store_true", help="Keep largest connected component and fill holes.")
@@ -305,6 +327,11 @@ def main():
 
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
+
+    if os.environ.get("BGDNET_ENABLE_DISTANCE_HEAD", "0") != "1":
+        raise RuntimeError(
+            "Set BGDNET_ENABLE_DISTANCE_HEAD=1 when testing a CHFS checkpoint."
+        )
 
     model = BGDNet(num_classes=1).to(device)
     load_state_dict_safely(model, args.pth_path)
@@ -365,13 +392,26 @@ def main():
             image = image.to(device, non_blocking=True)
 
             if args.tta:
-                pred_m, pred_b = predict_with_tta(model, image)
+                pred_m, pred_b, pred_d = predict_with_tta(model, image)
             else:
-                pred_m, pred_b = model(image)
+                pred_m, pred_b, pred_d = unpack_model_outputs(model(image))
+
             pred_m = F.interpolate(pred_m, size=gt.shape, mode="bilinear", align_corners=False)
             pred_b = F.interpolate(pred_b, size=gt.shape, mode="bilinear", align_corners=False)
+            if pred_d is not None:
+                pred_d = F.interpolate(
+                    pred_d,
+                    size=gt.shape,
+                    mode="bilinear",
+                    align_corners=False,
+                )
 
-            pm_prob = torch.sigmoid(pred_m)
+            pm_prob = fuse_mask_and_distance(
+                pred_m,
+                pred_d,
+                fusion_weight=args.distance_fusion_weight,
+                distance_temperature=args.distance_temperature,
+            )
             pb_prob = torch.sigmoid(pred_b)
 
             pred_prob = pm_prob.squeeze().detach().float().cpu().numpy()

@@ -169,7 +169,41 @@ def save_prob_png(prob_tensor: torch.Tensor, save_path: str):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     cv2.imwrite(save_path, img)
 
+def save_prob_npz(
+    mask_prob,
+    boundary_prob,
+    save_path,
+):
+    mask = (
+        mask_prob
+        .squeeze()
+        .detach()
+        .float()
+        .cpu()
+        .numpy()
+        .astype(np.float16)
+    )
 
+    boundary = (
+        boundary_prob
+        .squeeze()
+        .detach()
+        .float()
+        .cpu()
+        .numpy()
+        .astype(np.float16)
+    )
+
+    os.makedirs(
+        os.path.dirname(save_path),
+        exist_ok=True,
+    )
+
+    np.savez_compressed(
+        save_path,
+        mask_prob=mask,
+        boundary_prob=boundary,
+    )
 def main():
     parser = argparse.ArgumentParser()
 

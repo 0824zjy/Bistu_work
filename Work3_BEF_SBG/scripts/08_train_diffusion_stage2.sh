@@ -7,7 +7,7 @@ source /data/zjy_work/Work3_BEF_SBG/scripts/00_standard_env.sh
 mkdir -p "${DIFF_STAGE2_LOG_DIR}"
 mkdir -p "${PID_DIR}"
 
-STAGE1_CKPT="${DIFF_STAGE1_LOG_DIR}/checkpoints/last.ckpt"
+STAGE1_CKPT="${DIFF_STAGE1_LOG_DIR}/checkpoints/best.ckpt"
 
 if [ ! -f "${STAGE1_CKPT}" ]; then
     echo "[ERROR] Stage-1 checkpoint not found:"
@@ -25,7 +25,7 @@ export PL_GLOBAL_SEED="${PL_GLOBAL_SEED:-${SEED:-0}}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-${SEED:-0}}"
 
 export RESUME_PATH="${RESUME_PATH:-${STAGE1_CKPT}}"
-export PROMPT_JSON="${PROMPT_JSON:-${BEF_PROMPT_JSON}}"
+export PROMPT_JSON="${PROMPT_JSON:-${BEF_TRAIN_PROMPT_JSON}}"
 
 export LOG_ROOT="${DIFF_LOG_ROOT}"
 export EXP_NAME="${DIFF_STAGE2_EXP}"

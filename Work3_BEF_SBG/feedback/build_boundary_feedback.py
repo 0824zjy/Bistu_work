@@ -210,6 +210,9 @@ def main():
     # Kept for compatibility with previous shell script.
     # This file version does not rely on pred_boundary_dir.
     parser.add_argument("--pred_boundary_dir", type=str, default=None)
+    # Optional heterogeneous-teacher uncertainty maps.
+    parser.add_argument("--pred_variance_dir", type=str, default=None)
+    parser.add_argument("--pred_reliability_dir", type=str, default=None)
 
     parser.add_argument("--list_txt", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
@@ -220,6 +223,8 @@ def main():
 
     parser.add_argument("--gamma", type=float, default=3.0)
     parser.add_argument("--lambda_u", type=float, default=0.75)
+    parser.add_argument("--lambda_epi", type=float, default=0.75)
+    parser.add_argument("--reliability_floor", type=float, default=0.05)
 
     # More emphasis on false-negative boundary errors.
     # In lesion segmentation, missing lesion pixels usually hurts Dice more than
@@ -236,6 +241,8 @@ def main():
     out_error_fn_dir = os.path.join(args.out_dir, "error_fn")
     out_error_fp_dir = os.path.join(args.out_dir, "error_fp")
     out_entropy_dir = os.path.join(args.out_dir, "entropy")
+    out_variance_dir = os.path.join(args.out_dir, "epistemic_variance")
+    out_reliability_dir = os.path.join(args.out_dir, "teacher_reliability")
     out_difficulty_dir = os.path.join(args.out_dir, "difficulty")
     out_prior_dir = os.path.join(args.out_dir, "adaptive_boundary_prior")
 
@@ -246,6 +253,8 @@ def main():
         out_error_fn_dir,
         out_error_fp_dir,
         out_entropy_dir,
+        out_variance_dir,
+        out_reliability_dir,
         out_difficulty_dir,
         out_prior_dir,
     ]:
@@ -261,6 +270,16 @@ def main():
     for idx, stem in enumerate(stems):
         mask_path = find_mask(args.mask_dir, stem)
         pred_path = find_existing_file(args.pred_mask_dir, stem, IMG_EXTS)
+        variance_path = (
+            find_existing_file(args.pred_variance_dir, stem, IMG_EXTS)
+            if args.pred_variance_dir
+            else None
+        )
+        reliability_path = (
+            find_existing_file(args.pred_reliability_dir, stem, IMG_EXTS)
+            if args.pred_reliability_dir
+            else None
+        )
 
         if mask_path is None:
             miss_mask += 1
@@ -281,6 +300,26 @@ def main():
         pred_prob = read_gray_float(pred_path, resize_to=(width, height))
         pred_prob = np.nan_to_num(pred_prob, nan=0.0, posinf=1.0, neginf=0.0)
         pred_prob = np.clip(pred_prob, 0.0, 1.0).astype(np.float32)
+
+        if variance_path is not None:
+            epistemic_variance = read_gray_float(variance_path, resize_to=(width, height))
+        else:
+            epistemic_variance = np.zeros_like(pred_prob, dtype=np.float32)
+        epistemic_variance = np.clip(
+            np.nan_to_num(epistemic_variance, nan=0.0, posinf=1.0, neginf=0.0),
+            0.0,
+            1.0,
+        ).astype(np.float32)
+
+        if reliability_path is not None:
+            teacher_reliability = read_gray_float(reliability_path, resize_to=(width, height))
+        else:
+            teacher_reliability = np.ones_like(pred_prob, dtype=np.float32)
+        teacher_reliability = np.clip(
+            np.nan_to_num(teacher_reliability, nan=0.0, posinf=1.0, neginf=0.0),
+            float(args.reliability_floor),
+            1.0,
+        ).astype(np.float32)
 
         # Binarized prediction is used only for error maps.
         pred_bin = (pred_prob >= 0.5).astype(np.float32)
@@ -307,7 +346,8 @@ def main():
         difficulty_raw = (
             float(args.w_fn) * error_fn
             + float(args.w_fp) * error_fp
-            + float(args.lambda_u) * entropy
+            + float(args.lambda_u) * (entropy / 0.6931472)
+            + float(args.lambda_epi) * epistemic_variance
         )
 
         difficulty_raw = np.nan_to_num(
@@ -325,7 +365,10 @@ def main():
 
         difficulty_raw = np.clip(difficulty_raw, 0.0, 1.0).astype(np.float32)
         # Boundary-focused difficulty.
-        difficulty = difficulty_raw * soft_boundary
+        # Reliability prevents pure teacher noise from dominating while retaining
+        # high-variance regions as hard examples through the epistemic term above.
+        reliability_gate = 0.5 + 0.5 * teacher_reliability
+        difficulty = difficulty_raw * soft_boundary * reliability_gate
         difficulty = np.nan_to_num(
             difficulty,
             nan=0.0,
@@ -370,17 +413,23 @@ def main():
         save_gray_png(error_abs, os.path.join(out_error_abs_dir, out_name))
         save_gray_png(error_fn, os.path.join(out_error_fn_dir, out_name))
         save_gray_png(error_fp, os.path.join(out_error_fp_dir, out_name))
-        save_gray_png(entropy, os.path.join(out_entropy_dir, out_name))
+        save_gray_png(entropy / 0.6931472, os.path.join(out_entropy_dir, out_name))
+        save_gray_png(epistemic_variance, os.path.join(out_variance_dir, out_name))
+        save_gray_png(teacher_reliability, os.path.join(out_reliability_dir, out_name))
         save_gray_png(difficulty, os.path.join(out_difficulty_dir, out_name))
         save_gray_png(adaptive_prior, os.path.join(out_prior_dir, out_name))
 
         mean_error = float(np.nanmean(error_abs))
         mean_entropy = float(np.nanmean(entropy))
+        mean_variance = float(np.nanmean(epistemic_variance))
+        mean_reliability = float(np.nanmean(teacher_reliability))
         mean_difficulty = float(np.nanmean(difficulty))
         boundary_area = float(np.sum(hard_boundary > 0.5))
 
         mean_error = 0.0 if not np.isfinite(mean_error) else mean_error
         mean_entropy = 0.0 if not np.isfinite(mean_entropy) else mean_entropy
+        mean_variance = 0.0 if not np.isfinite(mean_variance) else mean_variance
+        mean_reliability = 0.0 if not np.isfinite(mean_reliability) else mean_reliability
         mean_difficulty = 0.0 if not np.isfinite(mean_difficulty) else mean_difficulty
         boundary_area = 0.0 if not np.isfinite(boundary_area) else boundary_area
 
@@ -388,6 +437,8 @@ def main():
             "image_name": stem,
             "mean_error": f"{mean_error:.6f}",
             "mean_entropy": f"{mean_entropy:.6f}",
+            "mean_variance": f"{mean_variance:.6f}",
+            "mean_reliability": f"{mean_reliability:.6f}",
             "mean_difficulty": f"{mean_difficulty:.6f}",
             "boundary_area": f"{boundary_area:.1f}",
         })
@@ -410,6 +461,8 @@ def main():
                 "image_name",
                 "mean_error",
                 "mean_entropy",
+                "mean_variance",
+                "mean_reliability",
                 "mean_difficulty",
                 "boundary_area",
             ],

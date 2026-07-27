@@ -175,11 +175,38 @@ def main():
             n_select = min(len(shuffled), n_select)
             selected = shuffled[:n_select]
 
+
         selected_sorted = sorted(selected)
+        selected_set = set(selected_sorted)
 
-        all_txt = os.path.join(args.out_dir, f"low_{tag}_all.txt")
+        unlabeled_sorted = sorted([
+            stem
+            for stem in all_stems
+            if stem not in selected_set
+        ])
+
+        all_txt = os.path.join(
+            args.out_dir,
+            f"low_{tag}_all.txt",
+        )
+        unlabeled_txt = os.path.join(
+            args.out_dir,
+            f"low_{tag}_unlabeled.txt",
+        )
+
         write_txt(all_txt, selected_sorted)
+        write_txt(unlabeled_txt, unlabeled_sorted)
 
+        print(
+            f"[SPLIT] ratio={ratio} "
+            f"tag={tag} "
+            f"selected={len(selected_sorted)}"
+        )
+        print(f"        all:       {all_txt}")
+        print(
+            f"        unlabeled: {unlabeled_txt} "
+            f"({len(unlabeled_sorted)})"
+        )
         print(f"[SPLIT] ratio={ratio} tag={tag} selected={len(selected_sorted)}")
         print(f"        all: {all_txt}")
 
